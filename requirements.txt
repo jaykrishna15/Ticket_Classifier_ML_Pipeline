@@ -1,0 +1,20 @@
+# Core ML and Data Science Libraries
+pandas>=1.5.0
+numpy>=1.21.0
+scikit-learn>=1.1.0
+scipy>=1.9.0
+
+# NLP Libraries
+nltk>=3.7
+textblob>=0.17.1
+
+# Visualization
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# Web Interface
+gradio>=3.40.0
+
+# Additional utilities
+jupyter>=1.0.0
+notebook>=6.4.0
