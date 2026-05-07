@@ -21,7 +21,7 @@ This system addresses the challenge of efficiently categorizing and prioritizing
 - **Performance Evaluation**: Detailed metrics and confusion matrices
 
 ### 🌐 Interactive Interface
-- **Gradio Web App**: User-friendly interface for real-time predictions
+- **Streamlit **: User-friendly interface for real-time predictions
 - **Single Ticket Mode**: Individual ticket classification
 - **Batch Upload**: CSV file processing for multiple tickets
 - **Visualization Dashboard**: Data exploration and model performance charts
