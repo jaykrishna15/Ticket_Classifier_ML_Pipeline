@@ -1,348 +1,304 @@
-import gradio as gr
+import streamlit as st
 import pandas as pd
 import json
 from ticket_classifier import TicketClassifier
+from collections import Counter
 import warnings
-warnings.filterwarnings('ignore')
 
-class TicketClassifierApp:
-    """
-    Gradio web application for ticket classification.
-    """
+warnings.filterwarnings("ignore")
 
-    def __init__(self):
-        """Initialize the app with a pre-trained classifier."""
-        self.classifier = None
-        self.is_trained = False
+# -----------------------------
+# PAGE CONFIG
+# -----------------------------
+st.set_page_config(
+    page_title="Ticket Classifier",
+    page_icon="🎫",
+    layout="wide"
+)
 
-    def train_classifier(self):
-        """Train the classifier with the dataset."""
-        try:
-            print("Training classifier...")
-            self.classifier = TicketClassifier()
+# -----------------------------
+# SESSION STATE
+# -----------------------------
+if "classifier" not in st.session_state:
+    st.session_state.classifier = None
+
+if "is_trained" not in st.session_state:
+    st.session_state.is_trained = False
+
+
+# -----------------------------
+# TRAIN MODEL FUNCTION
+# -----------------------------
+def train_classifier():
+    try:
+        with st.spinner("Training classifier..."):
+
+            classifier = TicketClassifier()
 
             # Load and prepare data
-            df = self.classifier.load_data('tickets_dataset.csv')
-            processed_df, feature_df = self.classifier.prepare_data(df)
+            df = classifier.load_data("tickets_dataset.csv")
+            processed_df, feature_df = classifier.prepare_data(df)
 
             # Train models
-            results = self.classifier.train_models(processed_df, feature_df)
+            results = classifier.train_models(processed_df, feature_df)
 
-            self.is_trained = True
+            st.session_state.classifier = classifier
+            st.session_state.is_trained = True
 
-            # Return training summary
-            summary = "✅ **Training Completed Successfully!**\n\n"
+            st.success("Training Completed Successfully!")
 
-            if 'issue_type' in results:
-                summary += f"**Issue Type Classifier Accuracy:** {results['issue_type']['accuracy']:.3f}\n"
+            st.subheader("📊 Model Performance")
 
-            if 'urgency_level' in results:
-                summary += f"**Urgency Level Classifier Accuracy:** {results['urgency_level']['accuracy']:.3f}\n"
+            if "issue_type" in results:
+                st.write(
+                    f"**Issue Type Accuracy:** "
+                    f"{results['issue_type']['accuracy']:.3f}"
+                )
 
-            summary += "\n🎯 **Ready for predictions!**"
+            if "urgency_level" in results:
+                st.write(
+                    f"**Urgency Level Accuracy:** "
+                    f"{results['urgency_level']['accuracy']:.3f}"
+                )
 
-            return summary
+    except Exception as e:
+        st.error(f"Training Failed: {str(e)}")
 
-        except Exception as e:
-            return f"❌ **Training Failed:** {str(e)}"
 
-    def predict_single_ticket(self, ticket_text):
-        """
-        Predict issue type, urgency, and extract entities for a single ticket.
+# -----------------------------
+# SINGLE PREDICTION FUNCTION
+# -----------------------------
+def predict_ticket(ticket_text):
 
-        Args:
-            ticket_text (str): Input ticket text
+    if not st.session_state.is_trained:
+        st.error("Please train the model first.")
+        return
 
-        Returns:
-            tuple: Formatted prediction results
-        """
-        if not self.is_trained or not self.classifier:
-            return (
-                "❌ Model not trained. Please train the model first.",
-                "❌ Model not trained",
-                "❌ Model not trained",
-                "❌ Model not trained"
+    if not ticket_text.strip():
+        st.warning("Please enter ticket text.")
+        return
+
+    try:
+        prediction = st.session_state.classifier.predict_ticket(ticket_text)
+
+        issue_type = prediction.get("issue_type", "Unknown")
+        issue_confidence = prediction.get("issue_type_confidence", 0)
+
+        urgency = prediction.get("urgency_level", "Unknown")
+        urgency_confidence = prediction.get("urgency_confidence", 0)
+
+        entities = prediction.get("entities", {})
+
+        # Results
+        st.subheader("🎯 Prediction Results")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.info(
+                f"""
+                **Issue Type:**  
+                {issue_type}
+
+                **Confidence:**  
+                {issue_confidence:.3f}
+                """
             )
 
-        if not ticket_text.strip():
-            return (
-                "⚠️ Please enter a ticket description.",
-                "No input provided",
-                "No input provided",
-                "No input provided"
+        with col2:
+            st.warning(
+                f"""
+                **Urgency Level:**  
+                {urgency}
+
+                **Confidence:**  
+                {urgency_confidence:.3f}
+                """
             )
 
-        try:
-            # Make prediction
-            prediction = self.classifier.predict_ticket(ticket_text)
+        # Entities
+        st.subheader("📋 Extracted Entities")
 
-            # Format results
-            issue_type = prediction.get('issue_type', 'Unknown')
-            issue_confidence = prediction.get('issue_type_confidence', 0)
-            urgency = prediction.get('urgency_level', 'Unknown')
-            urgency_confidence = prediction.get('urgency_confidence', 0)
-            entities = prediction.get('entities', {})
+        st.json(entities)
 
-            # Create formatted output
-            summary = f"""
-## 🎯 Prediction Results
+    except Exception as e:
+        st.error(f"Prediction Error: {str(e)}")
 
-**Issue Type:** {issue_type} (Confidence: {issue_confidence:.3f})
-**Urgency Level:** {urgency} (Confidence: {urgency_confidence:.3f})
 
-### 📋 Extracted Entities:
-"""
+# -----------------------------
+# BATCH PROCESS FUNCTION
+# -----------------------------
+def process_batch(uploaded_file):
 
-            for entity_type, entity_list in entities.items():
-                if entity_list:
-                    summary += f"- **{entity_type.title()}:** {', '.join(entity_list)}\n"
-                else:
-                    summary += f"- **{entity_type.title()}:** None detected\n"
+    if not st.session_state.is_trained:
+        st.error("Please train the model first.")
+        return
 
-            # Individual outputs for separate components
-            issue_output = f"{issue_type} (Confidence: {issue_confidence:.3f})"
-            urgency_output = f"{urgency} (Confidence: {urgency_confidence:.3f})"
-            entities_output = json.dumps(entities, indent=2)
+    try:
+        df = pd.read_csv(uploaded_file)
 
-            return summary, issue_output, urgency_output, entities_output
+        if "ticket_text" not in df.columns:
+            st.error("CSV must contain 'ticket_text' column.")
+            return
 
-        except Exception as e:
-            error_msg = f"❌ **Prediction Error:** {str(e)}"
-            return error_msg, error_msg, error_msg, error_msg
+        results = []
 
-    def process_batch_tickets(self, file):
-        """
-        Process multiple tickets from uploaded CSV file.
+        progress_bar = st.progress(0)
 
-        Args:
-            file: Uploaded CSV file
+        for idx, row in df.iterrows():
 
-        Returns:
-            tuple: Results dataframe and summary
-        """
-        if not self.is_trained or not self.classifier:
-            return None, "❌ Model not trained. Please train the model first."
+            ticket_text = str(row["ticket_text"])
 
-        if file is None:
-            return None, "⚠️ Please upload a CSV file."
+            prediction = st.session_state.classifier.predict_ticket(ticket_text)
 
-        try:
-            # Read uploaded file
-            df = pd.read_csv(file)
+            results.append({
+                "Ticket ID": idx + 1,
+                "Original Text": ticket_text,
+                "Issue Type": prediction.get("issue_type", "Unknown"),
+                "Issue Confidence":
+                    round(prediction.get("issue_type_confidence", 0), 3),
+                "Urgency": prediction.get("urgency_level", "Unknown"),
+                "Urgency Confidence":
+                    round(prediction.get("urgency_confidence", 0), 3),
+                "Entities":
+                    json.dumps(prediction.get("entities", {}))
+            })
 
-            if 'ticket_text' not in df.columns:
-                return None, "❌ CSV file must contain a 'ticket_text' column."
+            progress_bar.progress((idx + 1) / len(df))
 
-            # Process each ticket
-            results = []
-            for idx, row in df.iterrows():
-                ticket_text = row['ticket_text']
+        results_df = pd.DataFrame(results)
 
-                if pd.isna(ticket_text) or ticket_text == '':
-                    results.append({
-                        'ticket_id': idx + 1,
-                        'original_text': '',
-                        'predicted_issue_type': 'No text provided',
-                        'predicted_urgency': 'No text provided',
-                        'entities': '{}'
-                    })
-                    continue
+        st.success(f"Processed {len(results_df)} tickets successfully!")
 
-                try:
-                    prediction = self.classifier.predict_ticket(str(ticket_text))
+        st.subheader("📊 Results")
+        st.dataframe(results_df, use_container_width=True)
 
-                    results.append({
-                        'ticket_id': idx + 1,
-                        'original_text': ticket_text[:100] + '...' if len(str(ticket_text)) > 100 else ticket_text,
-                        'predicted_issue_type': f"{prediction.get('issue_type', 'Unknown')} ({prediction.get('issue_type_confidence', 0):.3f})",
-                        'predicted_urgency': f"{prediction.get('urgency_level', 'Unknown')} ({prediction.get('urgency_confidence', 0):.3f})",
-                        'entities': json.dumps(prediction.get('entities', {}))
-                    })
+        # Distribution
+        st.subheader("📈 Issue Type Distribution")
 
-                except Exception as e:
-                    results.append({
-                        'ticket_id': idx + 1,
-                        'original_text': str(ticket_text)[:100] + '...' if len(str(ticket_text)) > 100 else str(ticket_text),
-                        'predicted_issue_type': f'Error: {str(e)}',
-                        'predicted_urgency': f'Error: {str(e)}',
-                        'entities': '{}'
-                    })
+        issue_counts = Counter(results_df["Issue Type"])
 
-            results_df = pd.DataFrame(results)
+        chart_df = pd.DataFrame({
+            "Issue Type": list(issue_counts.keys()),
+            "Count": list(issue_counts.values())
+        })
 
-            summary = f"""
-## 📊 Batch Processing Results
+        st.bar_chart(chart_df.set_index("Issue Type"))
 
-**Total Tickets Processed:** {len(results_df)}
-**Successfully Processed:** {len([r for r in results if not r['predicted_issue_type'].startswith('Error')])}
+        # Download button
+        csv = results_df.to_csv(index=False).encode("utf-8")
 
-### 📈 Issue Type Distribution:
-"""
+        st.download_button(
+            label="⬇ Download Results CSV",
+            data=csv,
+            file_name="ticket_predictions.csv",
+            mime="text/csv"
+        )
 
-            # Add distribution summary
-            issue_types = [r['predicted_issue_type'].split(' (')[0] for r in results if not r['predicted_issue_type'].startswith('Error')]
-            if issue_types:
-                from collections import Counter
-                issue_counts = Counter(issue_types)
-                for issue, count in issue_counts.most_common():
-                    summary += f"- **{issue}:** {count}\n"
+    except Exception as e:
+        st.error(f"Batch Processing Error: {str(e)}")
 
-            return results_df, summary
 
-        except Exception as e:
-            return None, f"❌ **Batch Processing Error:** {str(e)}"
+# -----------------------------
+# UI
+# -----------------------------
+st.title("🎫 Customer Support Ticket Classifier")
+st.markdown(
+    "AI-powered ticket classification and entity extraction system"
+)
 
-    def create_interface(self):
-        """Create and configure the Gradio interface."""
+tabs = st.tabs([
+    "🤖 Model Training",
+    "🎯 Single Prediction",
+    "📊 Batch Processing",
+    "ℹ️ About"
+])
 
-        # Custom CSS for better styling
-        css = """
-        .gradio-container {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        .main-header {
-            text-align: center;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-        }
-        """
+# -----------------------------
+# TRAIN TAB
+# -----------------------------
+with tabs[0]:
 
-        with gr.Blocks(css=css, title="🎫 Ticket Classifier") as interface:
+    st.header("Train the Classification Models")
 
-            # Header
-            gr.HTML("""
-            <div class="main-header">
-                <h1>🎫 Customer Support Ticket Classifier</h1>
-                <p>AI-powered ticket classification and entity extraction system</p>
-            </div>
-            """)
+    if st.button("🚀 Train Models"):
 
-            # Training Section
-            with gr.Tab("🤖 Model Training"):
-                gr.Markdown("## Train the Classification Models")
-                gr.Markdown("Click the button below to train the models on the ticket dataset.")
+        train_classifier()
 
-                train_btn = gr.Button("🚀 Train Models", variant="primary", size="lg")
-                training_output = gr.Markdown()
+# -----------------------------
+# SINGLE PREDICTION TAB
+# -----------------------------
+with tabs[1]:
 
-                train_btn.click(
-                    fn=self.train_classifier,
-                    outputs=training_output
-                )
+    st.header("Classify Individual Tickets")
 
-            # Single Prediction Section
-            with gr.Tab("🎯 Single Ticket Prediction"):
-                gr.Markdown("## Classify Individual Tickets")
-
-                with gr.Row():
-                    with gr.Column(scale=2):
-                        ticket_input = gr.Textbox(
-                            label="Ticket Description",
-                            placeholder="Enter the customer support ticket text here...",
-                            lines=5
-                        )
-                        predict_btn = gr.Button("🔮 Predict", variant="primary")
-
-                    with gr.Column(scale=3):
-                        prediction_output = gr.Markdown(label="Prediction Results")
-
-                with gr.Row():
-                    issue_output = gr.Textbox(label="Issue Type", interactive=False)
-                    urgency_output = gr.Textbox(label="Urgency Level", interactive=False)
-
-                entities_output = gr.Code(label="Extracted Entities (JSON)", language="json")
-
-                predict_btn.click(
-                    fn=self.predict_single_ticket,
-                    inputs=ticket_input,
-                    outputs=[prediction_output, issue_output, urgency_output, entities_output]
-                )
-
-                # Example tickets
-                gr.Markdown("### 📝 Example Tickets (Click to try)")
-                gr.Examples(
-                    examples=[
-                        ["My SmartWatch V2 is broken and stopped working after 3 days. Order #12345. This is urgent!"],
-                        ["Can you tell me more about the warranty for PhotoSnap Cam? Is it available in blue?"],
-                        ["Payment issue for order #67890. I was charged twice for my RoboChef Blender."],
-                        ["I ordered Vision LED TV but received EcoBreeze AC instead. Order placed on 15 March."],
-                        ["Facing installation issue with PowerMax Battery. Setup fails at step 2."]
-                    ],
-                    inputs=ticket_input
-                )
-
-            # Batch Processing Section
-            with gr.Tab("📊 Batch Processing"):
-                gr.Markdown("## Process Multiple Tickets")
-                gr.Markdown("Upload a CSV file with a 'ticket_text' column to process multiple tickets at once.")
-
-                file_input = gr.File(
-                    label="Upload CSV File",
-                    file_types=[".csv"],
-                    type="filepath"
-                )
-
-                process_btn = gr.Button("📈 Process Batch", variant="primary")
-
-                batch_summary = gr.Markdown()
-                batch_results = gr.Dataframe(
-                    label="Processing Results",
-                    headers=["Ticket ID", "Original Text", "Predicted Issue Type", "Predicted Urgency", "Entities"]
-                )
-
-                process_btn.click(
-                    fn=self.process_batch_tickets,
-                    inputs=file_input,
-                    outputs=[batch_results, batch_summary]
-                )
-
-            # Information Section
-            with gr.Tab("ℹ️ About"):
-                gr.Markdown("""
-                ## 🎫 Customer Support Ticket Classifier
-
-                This application uses machine learning to automatically classify customer support tickets and extract key information.
-
-                ### 🔧 Features:
-                - **Issue Type Classification**: Categorizes tickets into types like Billing Problem, Product Defect, etc.
-                - **Urgency Level Prediction**: Determines if a ticket is Low, Medium, or High priority
-                - **Entity Extraction**: Identifies products, dates, order numbers, and complaint keywords
-                - **Batch Processing**: Handle multiple tickets at once via CSV upload
-
-                ### 🤖 Models Used:
-                - **Random Forest Classifier** for both issue type and urgency prediction
-                - **TF-IDF Vectorization** for text feature extraction
-                - **Rule-based Entity Extraction** for structured information
-
-                ### 📊 Dataset:
-                - 1000 customer support tickets
-                - 7 issue types and 3 urgency levels
-                - 10 different products
-
-                ### 🚀 Getting Started:
-                1. Go to the "Model Training" tab and train the models
-                2. Use "Single Ticket Prediction" for individual tickets
-                3. Use "Batch Processing" for multiple tickets via CSV upload
-                """)
-
-        return interface
-
-def main():
-    """Launch the Gradio application."""
-    app = TicketClassifierApp()
-    interface = app.create_interface()
-
-    # Launch the interface
-    interface.launch(
-        server_name="127.0.0.1",
-        server_port=8080,
-        share=False,
-        show_error=True,
-        debug=True
+    ticket_input = st.text_area(
+        "Ticket Description",
+        placeholder="Enter customer ticket here...",
+        height=200
     )
 
-if __name__ == "__main__":
-    main()
+    if st.button("🔮 Predict"):
+
+        predict_ticket(ticket_input)
+
+    st.subheader("📝 Example Tickets")
+
+    examples = [
+        "My SmartWatch V2 is broken and stopped working after 3 days.",
+        "Payment issue for order #67890. I was charged twice.",
+        "Installation issue with PowerMax Battery.",
+        "I ordered Vision LED TV but received EcoBreeze AC instead.",
+        "Need warranty information for PhotoSnap Cam."
+    ]
+
+    for example in examples:
+        st.code(example)
+
+# -----------------------------
+# BATCH TAB
+# -----------------------------
+with tabs[2]:
+
+    st.header("Process Multiple Tickets")
+
+    uploaded_file = st.file_uploader(
+        "Upload CSV File",
+        type=["csv"]
+    )
+
+    if uploaded_file is not None:
+
+        if st.button("📈 Process Batch"):
+
+            process_batch(uploaded_file)
+
+# -----------------------------
+# ABOUT TAB
+# -----------------------------
+with tabs[3]:
+
+    st.header("ℹ️ About")
+
+    st.markdown("""
+    ### Features
+    - Issue Type Classification
+    - Urgency Prediction
+    - Entity Extraction
+    - Batch CSV Processing
+
+    ### Models Used
+    - Random Forest Classifier
+    - TF-IDF Vectorization
+    - Rule-based Entity Extraction
+
+    ### Dataset
+    - 1000 customer support tickets
+    - 7 issue types
+    - 3 urgency levels
+
+    ### Workflow
+    1. Train the model
+    2. Predict single tickets
+    3. Process CSV files in batch
+    """)
